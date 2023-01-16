@@ -1,19 +1,11 @@
-import numpy as np
 import re
 import nltk
-import sys
-import skTest
-import pickle
-import os
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.datasets import load_files
 from sklearn.ensemble import RandomForestClassifier
 import pandas as pd
 
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.naive_bayes import MultinomialNB
 
 nltk.download('stopwords')
 nltk.download('wordnet')

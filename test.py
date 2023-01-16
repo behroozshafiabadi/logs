@@ -7,11 +7,22 @@ import hashlib
 from datetime import datetime
 from collections import defaultdict
 
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestClassifier
+
 # import spacy
 # from spacy.matcher import Matcher
 
 # nlp = spacy.load("en_core_web_sm")
 # matcher = Matcher(nlp.vocab)
+nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+
+
 rex = {
     "IP": r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$',  # ip regex
     "WINPATH": r'[^-\s]([^-\w*]\\\\[\w*\\{\}:`!@#_.\-]+)[^-\s]',
@@ -30,14 +41,77 @@ max_dist = 0.001
 alpha = 100
 savePath = os.getcwd()
 logname = "logs.csv"
+tfidfconverter = TfidfVectorizer(
+    max_features=1500, min_df=0, max_df=1, stop_words=stopwords.words('english'))
+model = None
+
 
 class partition():
-    def __init__(self, idx, log="", lev=-1):
+    def __init__(self, idx, log="", lev=-1, group=""):
         self.logs_idx = [idx]
         self.patterns = [log]
         self.level = lev
+        self.group = [group]
 
 # r'\\(\\[\w()\[\]\{\}:`!@#_\-]+)*\\',
+
+
+def pre_process(array_sentences):
+    documents = []
+    stemmer = WordNetLemmatizer()
+
+    for sen in range(0, len(array_sentences)):
+        # Remove all the special characters
+        document = re.sub(r'\W', ' ', str(array_sentences[sen]))
+
+        # remove all single characters
+        document = re.sub(r'\s+[a-zA-Z]\s+', ' ', document)
+
+        # Remove single characters from the start
+        document = re.sub(r'\^[a-zA-Z]\s+', ' ', document)
+
+        # Substituting multiple spaces with single space
+        document = re.sub(r'\s+', ' ', document, flags=re.I)
+
+        # Removing prefixed 'b'
+        document = re.sub(r'^b\s+', '', document)
+
+        # Converting to Lowercase
+        document = document.lower()
+
+        # Lemmatization
+        document = document.split()
+
+        document = [stemmer.lemmatize(word) for word in document]
+        document = ' '.join(document)
+
+        documents.append(document)
+
+    return documents
+
+# TODO : add file_path argument for dynamicly reading files
+
+
+def classification():
+
+    cf_models = pd.read_csv(".\models.csv")
+    X, y = cf_models['sentence'], cf_models['tag']
+
+    X = pre_process(X)
+    # tfidfconverter = TfidfVectorizer(
+    #     max_features=1500, min_df=0, max_df=1, stop_words=stopwords.words('english'))
+    X = tfidfconverter.fit_transform(X).toarray()
+
+    classifier = RandomForestClassifier(n_estimators=100)
+    classifier.fit(X, y)
+    return classifier
+
+
+def predict(sentneces, model):
+    xNew = pre_process([sentneces])
+    xNew = tfidfconverter.transform(xNew).toarray()
+    yNew = model.predict(xNew)
+    return yNew
 
 
 def parse(logname):
@@ -45,7 +119,10 @@ def parse(logname):
     logname = logname
     starttime = datetime.now()
     global df_log
+    global model
+    # TODO: must load dynamicly
     df_log = load_data()
+    model = classification()
     for lev in range(levels):
         if lev == 0:
             # Clustering
@@ -98,12 +175,14 @@ def get_clusters(logs, lev, old_clusters=None):
                 else:
                     cluster.logs_idx.extend(old_clusters[logidx].logs_idx)
                     cluster.patterns.append(old_clusters[logidx].patterns[0])
+                    cluster.group.append(old_clusters[logidx].group[0]) 
                 match = True
 
         if not match:
             if lev == 0:
                 # generate new cluster
-                clusters.append(partition(logidx, log, lev))
+                cluster_array = predict(log, model)
+                clusters.append(partition(logidx, log, lev, cluster_array[0]))
             else:
                 old_clusters[logidx].level = lev
                 clusters.append(old_clusters[logidx])  # keep old cluster
@@ -145,28 +224,32 @@ def dump():
     templates = [0] * df_log.shape[0]
     ids = [0] * df_log.shape[0]
     templates_occ = defaultdict(int)
-    
+
     for cluster in level_clusters[levels-1]:
         EventTemplate = cluster.patterns[0]
-        EventId = hashlib.md5(' '.join(EventTemplate).encode('utf-8')).hexdigest()[0:8]
+        EventId = hashlib.md5(
+            ' '.join(EventTemplate).encode('utf-8')).hexdigest()[0:8]
         Occurences = len(cluster.logs_idx)
         templates_occ[EventTemplate] += Occurences
 
         for idx in cluster.logs_idx:
             ids[idx] = EventId
-            templates[idx]= EventTemplate
-    
+            templates[idx] = EventTemplate
+
     df_log['EventId'] = ids
     df_log['EventTemplate'] = templates
-        
+
     occ_dict = dict(df_log['EventTemplate'].value_counts())
     df_event = pd.DataFrame()
     df_event['EventTemplate'] = df_log['EventTemplate'].unique()
     df_event['Occurrences'] = df_log['EventTemplate'].map(occ_dict)
-    df_event['EventId'] = df_log['EventTemplate'].map(lambda x: hashlib.md5(x.encode('utf-8')).hexdigest()[0:8])
+    df_event['EventId'] = df_log['EventTemplate'].map(
+        lambda x: hashlib.md5(x.encode('utf-8')).hexdigest()[0:8])
     df_log.drop("Content_", inplace=True, axis=1)
-    df_log.to_csv(os.path.join(savePath, logname + '_structured.csv'), index=False)
-    df_event.to_csv(os.path.join(savePath, logname + '_templates.csv'), index=False, columns=["EventId","EventTemplate","Occurrences"])
+    df_log.to_csv(os.path.join(savePath, logname +
+                  '_structured.csv'), index=False)
+    df_event.to_csv(os.path.join(savePath, logname + '_templates.csv'),
+                    index=False, columns=["EventId", "EventTemplate", "Occurrences"])
 
 
 def load_data():
