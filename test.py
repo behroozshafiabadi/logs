@@ -175,7 +175,8 @@ def get_clusters(logs, lev, old_clusters=None):
                 else:
                     cluster.logs_idx.extend(old_clusters[logidx].logs_idx)
                     cluster.patterns.append(old_clusters[logidx].patterns[0])
-                    cluster.group.append(old_clusters[logidx].group[0]) 
+                    if cluster.group[0] != old_clusters[logidx].group[0]:
+                        cluster.group.append(old_clusters[logidx].group[0])
                 match = True
 
         if not match:
@@ -223,18 +224,20 @@ def dump():
         os.makedirs(savePath)
     templates = [0] * df_log.shape[0]
     ids = [0] * df_log.shape[0]
+    groups = [0] * df_log.shape[0]
     templates_occ = defaultdict(int)
 
     for cluster in level_clusters[levels-1]:
         EventTemplate = cluster.patterns[0]
         EventId = hashlib.md5(
             ' '.join(EventTemplate).encode('utf-8')).hexdigest()[0:8]
-        Occurences = len(cluster.logs_idx)
+        Occurences = len(cluster.logs_idx)  
         templates_occ[EventTemplate] += Occurences
 
         for idx in cluster.logs_idx:
             ids[idx] = EventId
             templates[idx] = EventTemplate
+            groups[idx] = cluster.group[0]
 
     df_log['EventId'] = ids
     df_log['EventTemplate'] = templates
